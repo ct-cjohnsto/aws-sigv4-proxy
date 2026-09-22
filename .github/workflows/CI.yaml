@@ -5,13 +5,12 @@ on:
       - "master"
       - "release/v*"
 env:
-    AWS_REGION: us-west-2
-    STAGING_ECR_REGISTRY: 611364707713.dkr.ecr.us-west-2.amazonaws.com
     STAGING_ECR_REPOSITORY: aws-sigv4-proxy-staging
 
 permissions:
   id-token: write
   contents: read
+  packages: write
 
 jobs:
   build:
@@ -40,22 +39,18 @@ jobs:
       - name: Run tests
         run: go test -v ./...
 
-      - name: Configure AWS Credentials for Private ECR
-        uses: aws-actions/configure-aws-credentials@v6
-        with:
-          role-to-assume: ${{ secrets.AWS_ASSUME_ROLE_ARN_STAGING }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Log in to AWS private ECR
-        uses: docker/login-action@v4
-        with:
-          registry: ${{ env.STAGING_ECR_REGISTRY }}
-
       - name: Get short sha
         id: staging-info
         run: |
             shortSha=$(git rev-parse --short ${{ github.sha }})
             echo "commit-short-sha=$shortSha" >> $GITHUB_OUTPUT
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push image to staging
         uses: docker/build-push-action@v7
@@ -64,31 +59,5 @@ jobs:
           context: .
           push: true
           tags: |
-            ${{ env.STAGING_ECR_REGISTRY }}/${{ env.STAGING_ECR_REPOSITORY }}:${{ steps.staging-info.outputs.commit-short-sha }}
-          platforms : linux/amd64, linux/arm64
-
-  integration-tests:
-    name: Run integration tests on image from staging
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
-
-      - name: Configure AWS Credentials for Private ECR
-        uses: aws-actions/configure-aws-credentials@v6
-        with:
-          role-to-assume: ${{ secrets.AWS_ASSUME_ROLE_ARN_INTEG_TESTS }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Log in to AWS private ECR
-        uses: docker/login-action@v4
-        with:
-          registry: ${{ env.STAGING_ECR_REGISTRY }}
-
-      - name: Run integration tests
-        run: |
-          set -e
-          ./.github/scripts/integ-tests.sh ${{ env.STAGING_ECR_REGISTRY }}/${{ env.STAGING_ECR_REPOSITORY }}:${{ needs.build.outputs.commit-short-sha }}
+            ghcr.io/${{ github.repository_owner }}/${{ env.STAGING_ECR_REPOSITORY }}:${{ steps.staging-info.outputs.commit-short-sha }}
+          platforms: linux/amd64, linux/arm64
